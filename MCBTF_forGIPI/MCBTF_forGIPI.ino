@@ -4,110 +4,286 @@
  Author:	Tetsu Otter
 */
 /*
-���̃X�P�b�`�́A�ړ_�̊J��ǂ��GIPI�ɏ��𑗐M���邽�߂̂��̂ł��B
-�ϒ�R��p���Ĉʒu�����o����^�C�v�̂��͕̂ʂɂ���܂��B
-���̂����{�^������⃏���n���h���ɂ��Ή��ł���悤�ɂ��܂��B
+このスケッチは、接点の開閉を読んでGIPIに情報を送信するためのものです。
+ブレーキのみ、可変抵抗を用いた位置検出に対応(α版)
+そのうちボタン操作やワンハンドルにも対応できるようにすると思います。
 */
 #define H HIGH
 #define L LOW
-const int PPinNum = 5;//�}�X�R��(�͍s�n���h��)�̎g�p����s���̌�
-const int MaxP = 2;//�͍s�i��
-const int PPin[PPinNum] = { 2,3,4,5,6 };//�}�X�R��(�͍s�n���h��)�̎g�p����s���̔ԍ�
+
+//設定スタート
+const int MaxP = 2;//力行段数
+const int MaxB = 2;//制動段数
+
+const int PPinNum = 5;//マスコン(力行ハンドル)の使用するピンの個数
+const int PPin[PPinNum] = { 2,3,4,5,6 };//マスコン(力行ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
 const bool PHL[MaxP + 1][PPinNum] = 
-{//�ォ��"P0�̂Ƃ��̐ړ_���", "P1�̂Ƃ��̐ړ_���",,,���A���J�b�R���ɃJ���}��؂��PPin�ɓ��͂������ɓ����B�ړ_���ڐG���Ă����H�A����Ă����L�ƂȂ�B
-{H,H,H,H,H},//���J�b�R�̂��Ƃ́u,�v��Y��Ȃ��悤�ɁB
-{L,L,L,L,L}
-};//�}�X�R���̐ړ_�ƒi���̊֌W
+{//上から"P0のときの接点状態", "P1のときの接点状態",,,を、中カッコ内にカンマ区切りでPPinに入力した順に入れる。接点が接触していればH、離れていればLとなる。
+{H,H,H,H,H},//中カッコのあとの「,」を忘れないように。
+{L,L,L,L,L},
+{H,L,H,L,H}
+};//マスコンの接点と段数の関係
 
-const int BPinNum = 5;//�u���[�L(�����n���h��)�̎g�p����s���̌�
-const int MaxB = 2;//�����i��
-const int BPin[BPinNum] = { 7,8,9,10,11 };//�u���[�L(�����n���h��)�̎g�p����s���̔ԍ�
+const int BPinNum = 5;//ブレーキ(制動ハンドル)の使用するピンの個数
+const int BPin[BPinNum] = { 7,8,9,10,11 };//ブレーキ(制動ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
 const int BHL[MaxB + 1][BPinNum] =
-{//�ォ��"B0�̂Ƃ��̐ړ_���", "B1�̂Ƃ��̐ړ_���",,,���A���J�b�R���ɃJ���}��؂��BPin�ɓ��͂������ɓ����B�ړ_���ڐG���Ă����H�A����Ă����L�ƂȂ�B
-{ H,H,H,H,H },//���J�b�R�̂��Ƃ́u,�v��Y��Ȃ��悤�ɁB
-{ L,L,L,L,L }
-};//�u���[�L�̐ړ_�ƒi���̊֌W
+{//上から"B0のときの接点状態", "B1のときの接点状態",,,を、中カッコ内にカンマ区切りでBPinに入力した順に入れる。接点が接触していればH、離れていればLとなる。
+{ H,H,H,H,H },//中カッコのあとの「,」を忘れないように。
+{ L,L,L,L,L },
+{ H,L,H,L,H }
+};//ブレーキの接点と段数の関係
 
-const int RPinNum = 2;//���o�[�T�[(�t�]�n���h��)�̎g�p����s���̌�
-const int RPin[RPinNum] = { 12,13 };//���o�[�T�[(�t�]�n���h��)�̎g�p����s���̔ԍ�
+const int RPinNum = 2;//レバーサー(逆転ハンドル)の使用するピンの個数
+const int RPin[RPinNum] = { 12,13 };//レバーサー(逆転ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
 const int RHL[3][RPinNum] =
-{//�ړ_���ڐG���Ă����H�A����Ă����L�ƂȂ�B
-{ H,H },//���o�[�T�[�u�O�v�ʒu�̎��̃s�����
-{ L,L },//�u���v�ʒu�̎��̃s�����
-{ H,L }//�u��v�ʒu�̎��̃s�����
-};//���o�[�T�[�̐ړ_�ƈʒu�̊֌W
+{//接点が接触していればH、離れていればLとなる。
+{ H,H },//レバーサー「前」位置の時のピン状態
+{ L,L },//「中」位置の時のピン状態
+{ H,L }//「後」位置の時のピン状態
+};//レバーサーの接点と位置の関係
 
+const bool TSMCMode = false;//TSマスコン互換コマンド送信オプション
 
+const int BVRPin = -1;//ブレーキ(制動ハンドル)を可変抵抗を用いて位置検出する際の、接続したアナログピン番号
+const int PVRPin = -1;//マスコン(力行ハンドル)を可変抵抗を用いて位置検出する際の、接続したアナログピン番号
+					  //不要時はマイナス値を入れる。
+
+const int BVRNum[MaxB + 1] = { 10,100,1000 };//Analogピンの入力値一覧
+											 //B0,B1,B2...の順に入れる B0のほうが数値が小さくなるように
+
+//設定終了
+
+float BVRSiki[MaxB];
 void setup() {
 	Serial.begin(9600);
 	while (!Serial);
-	Serial.print("TOB" + String(MaxB) + "\r");
-	Serial.print("TOP0\r");
+	brcom(MaxB);
+	nocom(0);
 	Serial.print("TORN\r");
+	if (BPin[0] < 0 && BVRPin >= 0) {
+		for (int i = 0; i < MaxB; i++) {
+			BVRSiki[i] = (BVRNum[i] + BVRNum[i + 1]) / 2;
+		}
+	}
+	if (BPin[0] < 0 && BVRPin < 0) {
+		Serial.println("エラー : ブレーキのピンが有効化されていません。");
+		while (true)
+		{
+			digitalWrite(13, HIGH);
+			delay(500);
+			digitalWrite(13, LOW);
+			delay(200);
+			digitalWrite(13, HIGH);
+			delay(100);
+			digitalWrite(13, LOW);
+			delay(200);
+			Serial.println("エラー : ブレーキのピンが有効化されていません。");
+		}
+	}
+	else if(BPin[0] >= 0 && BVRPin >= 0)
+	{
+		Serial.println("エラー : ブレーキのピンが有効化されすぎています。");
+		while (true)
+		{
+			digitalWrite(13, HIGH);
+			delay(200);
+			digitalWrite(13, LOW);
+			delay(500);
+			digitalWrite(13, HIGH);
+			delay(200);
+			digitalWrite(13, LOW);
+			delay(500);
+			Serial.println("エラー : ブレーキのピンが有効化されすぎています。");
+		}
+	}
 }
 
 int OldPi = 0;
 int OldBi = MaxB;
 int OldRi = 1;
 void loop() {
+	float BAve;
 	bool PCompTF = false;
 	bool BCompTF = false;
 	bool RCompTF = false;
-	for (int i = 0; i < max(MaxB, MaxP); i++) {
-		if (i < MaxP && PCompTF == false) {
+	for (int i = 0; i <= max(MaxB, MaxP); i++) {
+		if (i <= MaxP && !PCompTF && i != OldPi && PPin[0] >= 0 && PVRPin < 0) {
 			for (int pdr = 0; pdr < PPinNum; pdr++) {
 				if (digitalRead(PPin[pdr]) != PHL[i][pdr]) {
 					goto Pout;
 				}
 			}
-			//P�i���ui�v�Ɣ��f���ꂽ�B
-			if (i != OldPi) {
-				Serial.print("TOP" + String(i) + "\r");
-				OldPi = i;
-			}
+			//P段数「i」と判断された。
+			nocom(i);
+			OldPi = i;
 			PCompTF = true;
 		Pout:;
 		}
-		if (i < MaxB && BCompTF == false) {
+		if (i <= MaxB && !BCompTF && i!= OldBi && BPin[0] >= 0 && BVRPin < 0) {
 			for (int bdr = 0; bdr < BPinNum; bdr++) {
 				if (digitalRead(BPin[bdr]) != BHL[i][bdr]) {
 					goto Bout;
 				}
 			}
-			//B�i���ui�v�Ɣ��f���ꂽ�B
-			if (i != OldBi) {
-				Serial.print("TOB" + String(i) + "\r");
-				OldBi = i;
-			}
+			//B段数「i」と判断された。
+			brcom(i);
+			OldBi = i;
 			BCompTF = true;
 		Bout:;
 		}
-		if (i < 3 && RCompTF == false) {
-			for (int bdr = 0; bdr < BPinNum; bdr++) {
-				if (digitalRead(BPin[bdr]) != BHL[i][bdr]) {
-					goto Rout;
+		if (i < 3 && !RCompTF && i != OldRi) {
+			if (RPin[0] >= 0) {
+				for (int bdr = 0; bdr < BPinNum; bdr++) {
+					if (digitalRead(BPin[bdr]) != BHL[i][bdr]) {
+						goto Rout;
+					}
 				}
-			}
-			//R�ʒu�ui�v�Ɣ��f���ꂽ�B
-			if (OldRi != i) {
+				//R位置「i」と判断された。
 				switch (i)
 				{
 				case 0:
-					Serial.print("TORF\r");
+					if (TSMCMode) {
+						Serial.print("\r");
+					}
+					else
+					{
+						Serial.print("TORF\r");
+					}
 					break;
 				case 1:
-					Serial.print("TORN\r");
+					if (TSMCMode) {
+						Serial.print("\r");
+					}
+					else
+					{
+						Serial.print("TORN\r");
+					}
 					break;
 				case 2:
-					Serial.print("TORB\r");
+					if (TSMCMode) {
+						Serial.print("\r");
+					}
+					else
+					{
+						Serial.print("TORB\r");
+					}
 					break;
 				}
 				OldRi = i;
+				BCompTF = true;
+			Rout:;
 			}
-			BCompTF = true;
-		Rout:;
 		}
-		delay(2);
+		if (BPin[0] < 0 && BVRPin >= 0) {
+			BAve += (int)analogRead(BVRPin);
+			BAve += (int)analogRead(BVRPin);
+		}
+		delay(1);
+	}
+	if (BPin[0] < 0 && BVRPin >= 0) {
+		BAve /= max(MaxB, MaxP);
+		aveB(BAve);
 	}
 	delay(5);
+}
+
+void brcom(int command) {
+	if (TSMCMode) {
+		switch (command) {
+		case 0:
+			Serial.print("TSA50\r");
+			break;
+		case 1:
+			Serial.print("TSA45\r");
+			break;
+		case 2:
+			Serial.print("TSA35\r");
+			break;
+		case 3:
+			Serial.print("TSA25\r");
+			break;
+		case 4:
+			Serial.print("TSA15\r");
+			break;
+		case 5:
+			Serial.print("TSA05\r");
+			break;
+		case 6:
+			Serial.print("TSE99\r");
+			break;
+		case 7:
+			Serial.print("TSB40\r");
+			break;
+		case 8:
+			Serial.print("TSB30\r");
+			break;
+		case 9:
+			Serial.print("TSB20\r");
+			break;
+		default:
+			Serial.print("TSB20\r");
+			break;
+		}
+	}
+	else {
+		Serial.print("TOB" + String(command) + "\r");
+	}
+}
+void nocom(int command) {
+	if (TSMCMode) {
+		switch (command) {
+		case 0:
+			Serial.print("TSA50\r");
+			break;
+		case 1:
+			Serial.print("TSA55\r");
+			break;
+		case 2:
+			Serial.print("TSA65\r");
+			break;
+		case 3:
+			Serial.print("TSA75\r");
+			break;
+		case 4:
+			Serial.print("TSA85\r");
+			break;
+		case 5:
+			Serial.print("TSA95\r");
+			break;
+		default:
+			Serial.print("TSA95\r");
+			break;
+		}
+	}
+	else {
+		Serial.print("TOP" + String(command) + "\r");
+	}
+}
+
+void aveB(float num) {
+	if (num > BVRSiki[MaxB - 1]) {
+		if (OldBi != MaxB) {
+			brcom(MaxB);
+			OldBi = MaxB;
+		}
+		goto aveBout;
+	}
+	if(num < BVRSiki[0])
+	{
+		if (OldBi != 0) {
+			brcom(0);
+			OldBi = 0;
+		}
+		goto aveBout;
+	}
+	if (BVRSiki[OldBi - 1] < num && num < BVRSiki[OldBi]) {
+		goto aveBout;
+	}
+	for (int i = 1; i < MaxB - 1; i++) {
+		if (BVRSiki[i - 1] < num && num < BVRSiki[i]) {
+			brcom(i);
+			goto aveBout;
+		}
+	}
+aveBout:;
 }
