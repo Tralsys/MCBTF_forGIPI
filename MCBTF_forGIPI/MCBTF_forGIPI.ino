@@ -2,26 +2,37 @@
  Name:		MCBTF_forGIPI.ino
  Created:	2018/08/07 18:13:43
  Author:	Tetsu Otter
+ Version:	1.0.5
 */
 /*
 このスケッチは、接点の開閉を読んでGIPIに情報を送信するためのものです。
 ブレーキのみ、可変抵抗を用いた位置検出に対応(α版)
 そのうちボタン操作やワンハンドルにも対応できるようにすると思います。
 */
+#define READ_MODE INPUT_PULLUP //PULLUPにするかどうか。
+
+#if READ_MODE==INPUT_PULLUP
+#define H LOW
+#define L HIGH
+#else
 #define H HIGH
 #define L LOW
+#endif // READ_MODE==INPUT_PULLUP
+
 
 //設定スタート
-const int MaxP = 2;//力行段数
+const int MaxP = 4;//力行段数
 const int MaxB = 2;//制動段数
 
-const int PPinNum = 5;//マスコン(力行ハンドル)の使用するピンの個数
-const int PPin[PPinNum] = { 2,3,4,5,6 };//マスコン(力行ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
+const int PPinNum = 4;//マスコン(力行ハンドル)の使用するピンの個数
+const int PPin[PPinNum] = { 2,3,4,5 };//マスコン(力行ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
 const bool PHL[MaxP + 1][PPinNum] = 
 {//上から"P0のときの接点状態", "P1のときの接点状態",,,を、中カッコ内にカンマ区切りでPPinに入力した順に入れる。接点が接触していればH、離れていればLとなる。
-{H,H,H,H,H},//中カッコのあとの「,」を忘れないように。
-{L,L,L,L,L},
-{H,L,H,L,H}
+{ L,L,L,L },//中カッコのあとの「,」を忘れないように。
+{ H,L,L,L },
+{ H,H,L,L },
+{ H,H,H,L },
+{ H,H,H,H }
 };//マスコンの接点と段数の関係
 
 const int BPinNum = 5;//ブレーキ(制動ハンドル)の使用するピンの個数
@@ -57,6 +68,17 @@ float BVRSiki[MaxB];
 void setup() {
 	Serial.begin(9600);
 	while (!Serial);
+	for (int i = 0; i <= max(MaxB, MaxP); i++) {
+		if (i <= MaxP) {
+			pinMode(PPin[i], READ_MODE);
+		}
+		if (i <= MaxB) {
+			pinMode(BPin[i], READ_MODE);
+		}
+		if (i <= 2) {
+			pinMode(RPin[i], READ_MODE);
+		}
+	}
 	brcom(MaxB);
 	nocom(0);
 	Serial.print("TORN\r");
@@ -143,7 +165,7 @@ void loop() {
 				{
 				case 0:
 					if (TSMCMode) {
-						Serial.print("\r");
+						Serial.print("TSG99\r");
 					}
 					else
 					{
@@ -152,7 +174,7 @@ void loop() {
 					break;
 				case 1:
 					if (TSMCMode) {
-						Serial.print("\r");
+						Serial.print("TSG50\r");
 					}
 					else
 					{
@@ -161,7 +183,7 @@ void loop() {
 					break;
 				case 2:
 					if (TSMCMode) {
-						Serial.print("\r");
+						Serial.print("TSG00\r");
 					}
 					else
 					{
