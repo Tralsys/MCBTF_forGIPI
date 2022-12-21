@@ -1,13 +1,10 @@
 /*
  Name:		MCBTF_forGIPI.ino
- Created:	2018/08/07 18:13:43
  Author:	Tetsu Otter
- Version:	1.0.5
+ Version:	2.0.0
 */
 /*
 このスケッチは、接点の開閉を読んでGIPIに情報を送信するためのものです。
-ブレーキのみ、可変抵抗を用いた位置検出に対応(α版)
-そのうちボタン操作やワンハンドルにも対応できるようにすると思います。
 */
 #define READ_MODE INPUT_PULLUP //PULLUPにするかどうか。
 
@@ -15,297 +12,294 @@
 #define H LOW
 #define L HIGH
 #else
+#define READ_MODE INPUT
 #define H HIGH
 #define L LOW
 #endif // READ_MODE==INPUT_PULLUP
 
-
-//設定スタート
-const int MaxP = 4;//力行段数
-const int MaxB = 2;//制動段数
-
-const int PPinNum = 4;//マスコン(力行ハンドル)の使用するピンの個数
-const int PPin[PPinNum] = { 2,3,4,5 };//マスコン(力行ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
-const bool PHL[MaxP + 1][PPinNum] = 
+#pragma region 設定スタート
+const int PowerMaxPositionNum = 4;
+const int PPinCount = 4;//マスコン(力行ハンドル)の使用するピンの個数
+const int PPin[PPinCount] = { 2,3,4,5 };//マスコン(力行ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
+const int PHL[PowerMaxPositionNum + 2][PPinCount] = 
 {//上から"P0のときの接点状態", "P1のときの接点状態",,,を、中カッコ内にカンマ区切りでPPinに入力した順に入れる。接点が接触していればH、離れていればLとなる。
 { L,L,L,L },//中カッコのあとの「,」を忘れないように。
 { H,L,L,L },
 { H,H,L,L },
 { H,H,H,L },
-{ H,H,H,H }
+{ H,H,H,H },
+NULL
 };//マスコンの接点と段数の関係
 
-const int BPinNum = 5;//ブレーキ(制動ハンドル)の使用するピンの個数
-const int BPin[BPinNum] = { 7,8,9,10,11 };//ブレーキ(制動ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
-const int BHL[MaxB + 1][BPinNum] =
+const int BrakeMaxPositionNum = 2;
+const int BPinCount = 5;//ブレーキ(制動ハンドル)の使用するピンの個数
+const int BPin[BPinCount] = { 7,8,9,10,11 };//ブレーキ(制動ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
+const int BHL[BrakeMaxPositionNum + 2][BPinCount] =
 {//上から"B0のときの接点状態", "B1のときの接点状態",,,を、中カッコ内にカンマ区切りでBPinに入力した順に入れる。接点が接触していればH、離れていればLとなる。
 { H,H,H,H,H },//中カッコのあとの「,」を忘れないように。
 { L,L,L,L,L },
-{ H,L,H,L,H }
+{ H,L,H,L,H },
+NULL
 };//ブレーキの接点と段数の関係
 
-const int RPinNum = 2;//レバーサー(逆転ハンドル)の使用するピンの個数
-const int RPin[RPinNum] = { 12,13 };//レバーサー(逆転ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
-const int RHL[3][RPinNum] =
+const int RPinCount = 2;//レバーサー(逆転ハンドル)の使用するピンの個数
+const int RPin[RPinCount] = { 12,13 };//レバーサー(逆転ハンドル)の使用するピンの番号 不要な場合は先頭にマイナス値を入れる
+const int RHL[4][RPinCount] =
 {//接点が接触していればH、離れていればLとなる。
 { H,H },//レバーサー「前」位置の時のピン状態
 { L,L },//「中」位置の時のピン状態
-{ H,L }//「後」位置の時のピン状態
+{ H,L },//「後」位置の時のピン状態
+NULL
 };//レバーサーの接点と位置の関係
 
 const bool TSMCMode = false;//TSマスコン互換コマンド送信オプション
 
-const int BVRPin = -1;//ブレーキ(制動ハンドル)を可変抵抗を用いて位置検出する際の、接続したアナログピン番号
-const int PVRPin = -1;//マスコン(力行ハンドル)を可変抵抗を用いて位置検出する際の、接続したアナログピン番号
-					  //不要時はマイナス値を入れる。
+#pragma endregion 設定終了
 
-const int BVRNum[MaxB + 1] = { 10,100,1000 };//Analogピンの入力値一覧
-											 //B0,B1,B2...の順に入れる B0のほうが数値が小さくなるように
+#define COMMAND_DELIMITER ("\r")
 
-//設定終了
+const int REVERSER_FORWARD = 0;
+const int REVERSER_NEUTRAL = 1;
+const int REVERSER_BACKWARD = 2;
 
-float BVRSiki[MaxB];
+int lastBrakeHandlePosition = BrakeMaxPositionNum;
+int lastPowerHandlePosition = PowerMaxPositionNum;
+int lastReverserHandlePosition = REVERSER_NEUTRAL;
+
+bool isBrakeVRMode = false;
+bool isPowerVRMode = false;
+bool isReverserVRMode = false;
+
+#pragma region Functino Declaration
+void SetUpPin(const int* pinList, int length);
+
+void printBrakeCommand(int command);
+void printPowerCommand(int command);
+void printReverserCommand(int command);
+
+const int *getBrakePinSettingList(int handlePosition);
+const int *getPowerPinSettingList(int handlePosition);
+const int *getReverserPinSettingList(int handlePosition);
+
+void checkAndPrintHandlePosition(
+	bool isVRMode,
+	const int* pinNumberList,
+	const int *(*pinSettingList)(int),
+	int pinCount,
+	int maxHandlePosition,
+	int *lastHandlePosition,
+	void (*printCommand)(int)
+);
+
+bool isCurrentHandlePositionHere(const int *pinNumberList, const int *pinSettingList, int pinCount);
+bool getCurrentHandlePosition(const int *pinNumberList, const int *(*pinSettingList)(int), int pinCount, int maxHandlePosition, int *result);
+
+void SetPowerCommand(int pos, char* buf);
+void SetBrakeCommand(int pos, char* buf);
+void SetReverserCommand(int pos, char* buf);
+#pragma endregion Functino Declaration
+
+void SetUpPin(const int* pinList, int length)
+{
+	for (int i = 0; i < length; i++)
+	{
+		pinMode(pinList[i], READ_MODE);
+	}
+}
+
 void setup() {
 	Serial.begin(9600);
 	while (!Serial);
-	for (int i = 0; i <= max(MaxB, MaxP); i++) {
-		if (i <= MaxP) {
-			pinMode(PPin[i], READ_MODE);
-		}
-		if (i <= MaxB) {
-			pinMode(BPin[i], READ_MODE);
-		}
-		if (i <= 2) {
-			pinMode(RPin[i], READ_MODE);
-		}
-	}
-	brcom(MaxB);
-	nocom(0);
-	Serial.print("TORN\r");
-	if (BPin[0] < 0 && BVRPin >= 0) {
-		for (int i = 0; i < MaxB; i++) {
-			BVRSiki[i] = (BVRNum[i] + BVRNum[i + 1]) / 2;
-		}
-	}
-	if (BPin[0] < 0 && BVRPin < 0) {
-		Serial.println("エラー : ブレーキのピンが有効化されていません。");
-		while (true)
-		{
-			digitalWrite(13, HIGH);
-			delay(500);
-			digitalWrite(13, LOW);
-			delay(200);
-			digitalWrite(13, HIGH);
-			delay(100);
-			digitalWrite(13, LOW);
-			delay(200);
-			Serial.println("エラー : ブレーキのピンが有効化されていません。");
-		}
-	}
-	else if(BPin[0] >= 0 && BVRPin >= 0)
-	{
-		Serial.println("エラー : ブレーキのピンが有効化されすぎています。");
-		while (true)
-		{
-			digitalWrite(13, HIGH);
-			delay(200);
-			digitalWrite(13, LOW);
-			delay(500);
-			digitalWrite(13, HIGH);
-			delay(200);
-			digitalWrite(13, LOW);
-			delay(500);
-			Serial.println("エラー : ブレーキのピンが有効化されすぎています。");
-		}
-	}
+
+	SetUpPin(PPin, PPinCount);
+	SetUpPin(BPin, BPinCount);
+	SetUpPin(RPin, 3);
+
+	printBrakeCommand(BrakeMaxPositionNum);
+	printPowerCommand(0);
+
+	printReverserCommand(REVERSER_NEUTRAL);
 }
 
-int OldPi = 0;
-int OldBi = MaxB;
-int OldRi = 1;
 void loop() {
-	float BAve;
-	bool PCompTF = false;
-	bool BCompTF = false;
-	bool RCompTF = false;
-	for (int i = 0; i <= max(MaxB, MaxP); i++) {
-		if (i <= MaxP && !PCompTF && i != OldPi && PPin[0] >= 0 && PVRPin < 0) {
-			for (int pdr = 0; pdr < PPinNum; pdr++) {
-				if (digitalRead(PPin[pdr]) != PHL[i][pdr]) {
-					goto Pout;
-				}
-			}
-			//P段数「i」と判断された。
-			nocom(i);
-			OldPi = i;
-			PCompTF = true;
-		Pout:;
-		}
-		if (i <= MaxB && !BCompTF && i!= OldBi && BPin[0] >= 0 && BVRPin < 0) {
-			for (int bdr = 0; bdr < BPinNum; bdr++) {
-				if (digitalRead(BPin[bdr]) != BHL[i][bdr]) {
-					goto Bout;
-				}
-			}
-			//B段数「i」と判断された。
-			brcom(i);
-			OldBi = i;
-			BCompTF = true;
-		Bout:;
-		}
-		if (i < 3 && !RCompTF && i != OldRi) {
-			if (RPin[0] >= 0) {
-				for (int bdr = 0; bdr < BPinNum; bdr++) {
-					if (digitalRead(BPin[bdr]) != BHL[i][bdr]) {
-						goto Rout;
-					}
-				}
-				//R位置「i」と判断された。
-				switch (i)
-				{
-				case 0:
-					if (TSMCMode) {
-						Serial.print("TSG99\r");
-					}
-					else
-					{
-						Serial.print("TORF\r");
-					}
-					break;
-				case 1:
-					if (TSMCMode) {
-						Serial.print("TSG50\r");
-					}
-					else
-					{
-						Serial.print("TORN\r");
-					}
-					break;
-				case 2:
-					if (TSMCMode) {
-						Serial.print("TSG00\r");
-					}
-					else
-					{
-						Serial.print("TORB\r");
-					}
-					break;
-				}
-				OldRi = i;
-				BCompTF = true;
-			Rout:;
-			}
-		}
-		if (BPin[0] < 0 && BVRPin >= 0) {
-			BAve += (int)analogRead(BVRPin);
-			BAve += (int)analogRead(BVRPin);
-		}
-		delay(1);
-	}
-	if (BPin[0] < 0 && BVRPin >= 0) {
-		BAve /= max(MaxB, MaxP);
-		aveB(BAve);
-	}
+	checkAndPrintHandlePosition(isBrakeVRMode, BPin, getBrakePinSettingList, BPinCount, BrakeMaxPositionNum, &lastBrakeHandlePosition, printBrakeCommand);
+	checkAndPrintHandlePosition(isPowerVRMode, PPin, getPowerPinSettingList, PPinCount, PowerMaxPositionNum, &lastPowerHandlePosition, printPowerCommand);
+	checkAndPrintHandlePosition(isReverserVRMode, RPin, getReverserPinSettingList, RPinCount, 2, &lastReverserHandlePosition, printReverserCommand);
+
 	delay(5);
 }
 
-void brcom(int command) {
-	if (TSMCMode) {
-		switch (command) {
-		case 0:
-			Serial.print("TSA50\r");
-			break;
-		case 1:
-			Serial.print("TSA45\r");
-			break;
-		case 2:
-			Serial.print("TSA35\r");
-			break;
-		case 3:
-			Serial.print("TSA25\r");
-			break;
-		case 4:
-			Serial.print("TSA15\r");
-			break;
-		case 5:
-			Serial.print("TSA05\r");
-			break;
-		case 6:
-			Serial.print("TSE99\r");
-			break;
-		case 7:
-			Serial.print("TSB40\r");
-			break;
-		case 8:
-			Serial.print("TSB30\r");
-			break;
-		case 9:
-			Serial.print("TSB20\r");
-			break;
-		default:
-			Serial.print("TSB20\r");
-			break;
-		}
-	}
-	else {
-		Serial.print("TOB" + String(command) + "\r");
-	}
+void printBrakeCommand(int num) {
+	char cmd[16] = "";
+	SetBrakeCommand(num, cmd);
+	Serial.print(strcat(cmd, COMMAND_DELIMITER));
 }
-void nocom(int command) {
-	if (TSMCMode) {
-		switch (command) {
-		case 0:
-			Serial.print("TSA50\r");
-			break;
-		case 1:
-			Serial.print("TSA55\r");
-			break;
-		case 2:
-			Serial.print("TSA65\r");
-			break;
-		case 3:
-			Serial.print("TSA75\r");
-			break;
-		case 4:
-			Serial.print("TSA85\r");
-			break;
-		case 5:
-			Serial.print("TSA95\r");
-			break;
-		default:
-			Serial.print("TSA95\r");
-			break;
-		}
-	}
-	else {
-		Serial.print("TOP" + String(command) + "\r");
-	}
+void printPowerCommand(int num) {
+	char cmd[16] = "";
+	SetPowerCommand(num, cmd);
+	Serial.print(strcat(cmd, COMMAND_DELIMITER));
+}
+void printReverserCommand(int num) {
+	char cmd[8] = "";
+	SetReverserCommand(num, cmd);
+	Serial.print(strcat(cmd, COMMAND_DELIMITER));
 }
 
-void aveB(float num) {
-	if (num > BVRSiki[MaxB - 1]) {
-		if (OldBi != MaxB) {
-			brcom(MaxB);
-			OldBi = MaxB;
-		}
-		goto aveBout;
-	}
-	if(num < BVRSiki[0])
-	{
-		if (OldBi != 0) {
-			brcom(0);
-			OldBi = 0;
-		}
-		goto aveBout;
-	}
-	if (BVRSiki[OldBi - 1] < num && num < BVRSiki[OldBi]) {
-		goto aveBout;
-	}
-	for (int i = 1; i < MaxB - 1; i++) {
-		if (BVRSiki[i - 1] < num && num < BVRSiki[i]) {
-			brcom(i);
-			goto aveBout;
-		}
-	}
-aveBout:;
+const int *getPowerPinSettingList(int handlePosition)
+{
+	return PHL[handlePosition];
 }
+const int *getBrakePinSettingList(int handlePosition)
+{
+	return BHL[handlePosition];
+}
+const int *getReverserPinSettingList(int handlePosition)
+{
+	return RHL[handlePosition];
+}
+
+void checkAndPrintHandlePosition(
+	bool isVRMode,
+	const int* pinNumberList,
+	const int *(*pinSettingList)(int),
+	int pinCount,
+	int maxHandlePosition,
+	int *lastHandlePosition,
+	void (*printCommand)(int)
+)
+{
+	int currentPosition;
+
+	if (isVRMode)
+	{
+	}
+	else if (!getCurrentHandlePosition(pinNumberList, pinSettingList, pinCount, maxHandlePosition, &currentPosition))
+	{
+		return;
+	}
+	
+	if (*lastHandlePosition == currentPosition)
+	{
+		return;
+	}
+	
+	printCommand(currentPosition);
+
+	*lastHandlePosition = currentPosition;
+}
+
+bool isCurrentHandlePositionHere(const int *pinNumberList, const int *pinSettingList, const int pinCount)
+{
+	for (int i = 0; i < pinCount; i++)
+	{
+		if (digitalRead(pinNumberList[i]) != pinSettingList[i])
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool getCurrentHandlePosition(const int *pinNumberList, const int *(*pinSettingList)(int), int pinCount, int maxHandlePosition, int *result)
+{
+	if (pinNumberList[0] < 0)
+	{
+		return false;
+	}
+
+	for (int i = 0; i <= maxHandlePosition; i++)
+	{
+		if (isCurrentHandlePositionHere(pinNumberList, pinSettingList(i), pinCount))
+		{
+			*result = i;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+#pragma region SetCommand
+
+const int TSMCPowerCommandListMaxIndex = 5;
+const char TSMCPowerCommandList[TSMCPowerCommandListMaxIndex + 1][6] = {
+	"TSA50",
+	"TSA55",
+	"TSA65",
+	"TSA75",
+	"TSA85",
+	"TSA95",
+};
+
+const int TSMCBrakeCommandListMaxIndex = 9;
+const char TSMCBrakeCommandList[TSMCBrakeCommandListMaxIndex + 1][6] = {
+	"TSA50",
+	"TSA45",
+	"TSA35",
+	"TSA25",
+	"TSA15",
+	"TSA05",
+	"TSE99",
+	"TSB40",
+	"TSB30",
+	"TSB20",
+};
+
+const int ReverserCommandListMaxIndex = 2;
+const char TSMCReverserCommandList[ReverserCommandListMaxIndex + 1][6] = {
+	"TSG99",
+	"TSG50",
+	"TSG00",
+};
+
+const char BIDSReverserCommandList[ReverserCommandListMaxIndex + 1][5] = {
+	"TORF",
+	"TORN",
+	"TORB",
+};
+
+void SetPowerCommand(int pos, char* buf)
+{
+	if (!TSMCMode)
+	{
+		strcpy(buf, "TOP");
+		itoa(pos, buf + 3, 10);
+		return;
+	}
+
+	const char* cmd = pos <= 0
+		? TSMCPowerCommandList[0]
+		: TSMCPowerCommandList[min(pos, TSMCPowerCommandListMaxIndex)];
+
+	strcpy(buf, cmd);
+}
+
+void SetBrakeCommand(int pos, char* buf)
+{
+	if (!TSMCMode)
+	{
+		strcpy(buf, "TOB");
+		itoa(pos, buf + 3, 10);
+		return;
+	}
+
+	const char* cmd = pos <= 0
+		? TSMCBrakeCommandList[0]
+		: TSMCBrakeCommandList[min(pos, TSMCBrakeCommandListMaxIndex)];
+
+	strcpy(buf, cmd);
+}
+
+#define reverserCommandList(index) (TSMCMode ? TSMCReverserCommandList[index] : BIDSReverserCommandList[index])
+void SetReverserCommand(int pos, char* buf)
+{
+	const char* cmd = pos <= 0
+		? reverserCommandList(0)
+		: reverserCommandList(min(pos, ReverserCommandListMaxIndex));
+
+	strcpy(buf, cmd);
+	return;
+}
+
+#pragma endregion SetCommand
